@@ -9,10 +9,21 @@ const signed = (n, unit = '') => (n > 0 ? '+' : n < 0 ? '−' : '±') + fmt(Math
 const DAYNAMES = ['Söndag', 'Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lördag'];
 const MONTHS = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
 const DAY_MS = 86400000;
-const allEx = PROGRAM.flatMap(d => d.exercises);
-const exById = id => allEx.find(e => e.id === id);
-const dayById = id => PROGRAM.find(d => d.id === id);
-const dayOfEx = id => PROGRAM.find(d => d.exercises.some(e => e.id === id));
+const days = () => PROGRAM.map(d => ({ ...d, exercises: [...d.exercises, ...(((data && data.custom) || []).filter(c => c.dayId === d.id))] }));
+const allEx = () => days().flatMap(d => d.exercises);
+const exById = id => allEx().find(e => e.id === id);
+const dayById = id => days().find(d => d.id === id);
+const dayOfEx = id => days().find(d => d.exercises.some(e => e.id === id));
+const PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 100"><rect width="160" height="100" fill="#DCE3EC"/><g fill="#0E2240"><rect x="30" y="47" width="100" height="6" rx="3"/><rect x="42" y="30" width="10" height="40" rx="3"/><rect x="108" y="30" width="10" height="40" rx="3"/><rect x="54" y="37" width="7" height="26" rx="2"/><rect x="99" y="37" width="7" height="26" rx="2"/></g></svg>');
+const photoUrl = k => '/.netlify/functions/photo?k=' + encodeURIComponent(k);
+function imgSrc(e) {
+  const o = data && data.overrides && data.overrides[e.id];
+  const k = (o && o.photo) || e.photo;
+  if (k) return photoUrl(k);
+  if (e.img) return '/' + e.img.replace(/^\/?(img\/)?/, '');
+  return PLACEHOLDER;
+}
+document.addEventListener('error', ev => { const el = ev.target; if (el && el.tagName === 'IMG' && !el.dataset.fb) { el.dataset.fb = '1'; el.src = PLACEHOLDER; } }, true);
 const ymd = t => new Date(t).toLocaleDateString('sv-SE');
 const target = e => `${e.sets} × ${e.reps[0] === e.reps[1] ? e.reps[0] : e.reps[0] + '–' + e.reps[1]}${e.perSide ? ' / ' + e.perSide : ''}`;
 function isoWeek(date) {
@@ -73,7 +84,7 @@ function logout() { localStorage.removeItem('tl_auth'); auth = null; user = null
 /* ---------- data och synk ---------- */
 let data = null, saveT = null, dirty = false, synced = true;
 const cacheKey = () => 'tl_data_' + user.id;
-const blank = () => ({ version: 1, profile: { name: user.name || '', heightCm: null, weights: [] }, schedule: { 1: 'd1', 2: 'd2', 3: 'd3', 6: 'd4' }, sessions: [], updatedAt: 0 });
+const blank = () => ({ version: 1, profile: { name: user.name || '', heightCm: null, weights: [] }, schedule: { 1: 'd1', 2: 'd2', 3: 'd3', 6: 'd4' }, sessions: [], custom: [], overrides: {}, updatedAt: 0 });
 async function api(method, body) {
   const t = await getToken();
   if (!t) throw new Error('noauth');
@@ -90,6 +101,7 @@ async function loadData() {
     else if (cached) { dirty = true; push(); }
     synced = true;
   } catch { synced = false; toast('Offline – visar sparad data på telefonen'); }
+  data.custom = data.custom || []; data.overrides = data.overrides || {};
   localStorage.setItem(cacheKey(), JSON.stringify(data));
 }
 function save() {
@@ -179,7 +191,7 @@ function diffs(exId) {
 }
 function records() {
   const out = [];
-  for (const e of allEx) {
+  for (const e of allEx()) {
     const h = exHistory(e.id).slice().reverse();
     if (h.length < 2) continue;
     let best = h[0].best, rec = null;
@@ -207,7 +219,7 @@ function nextPlanned() {
     const d = new Date(today.getTime() + i * DAY_MS), dayId = data.schedule[d.getDay()];
     if (dayId && !(i === 0 && doneToday)) return { date: d, day: dayById(dayId), label: i === 0 ? 'idag' : i === 1 ? 'imorgon' : DAYNAMES[d.getDay()].toLowerCase() };
   }
-  return { date: today, day: PROGRAM[0], label: 'idag' };
+  return { date: today, day: dayById('d1'), label: 'idag' };
 }
 function notes() {
   const left = Math.max(0, Math.ceil((new Date(GOAL_DATE + 'T00:00:00') - new Date()) / DAY_MS));
@@ -259,10 +271,14 @@ function render() {
   if (pending && pending.kind === 'recovery') { $('#nav').hidden = true; return viewNewPassword(); }
   $('#nav').hidden = false;
   const p = (location.hash.slice(1) || '/').split('/').filter(Boolean);
-  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === (p[0] === 'ovning' ? 'pass' : p[0] || 'hem')));
+  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === ({ ovning: 'pass', ny: 'pass', andra: 'pass', logg: 'historik' }[p[0]] || p[0] || 'hem')));
   if (p[0] === 'pass') viewDay(p[1]);
   else if (p[0] === 'ovning') viewExercise(p[1]);
   else if (p[0] === 'profil') viewProfile();
+  else if (p[0] === 'historik') viewHistory();
+  else if (p[0] === 'logg') viewSession(p[1]);
+  else if (p[0] === 'ny') viewExerciseForm(p[1], null);
+  else if (p[0] === 'andra') viewExerciseForm(null, p[1]);
   else viewHome();
   scrollTo(0, 0);
 }
@@ -356,7 +372,7 @@ function viewHome() {
     <div class="legend"><span style="--c:#4DA3FF">Tränat</span><span style="--c:transparent;--b:2px solid #4DA3FF">Planerat</span></div></div>
 
   <section><h3>${s ? 'Pågående pass' : 'Nästa pass'} <span>${s ? '' : nx.label + ' 06–09'}</span></h3>
-    <div class="next"><div class="img"><img src="${nextDay.exercises[0].img}" alt=""><span class="tag">${nextDay.exercises.length} övningar · 45–50 min</span></div>
+    <div class="next"><div class="img"><img src="${imgSrc(nextDay.exercises[0])}" alt=""><span class="tag">${nextDay.exercises.length} övningar · 45–50 min</span></div>
     <div class="body"><h4>${esc(nextDay.name)}</h4><p>${esc(nextDay.exercises.slice(0, 3).map(e => e.name).join(', '))} med mera.</p>
     ${s ? `<a class="btn go" href="#/pass/${s.dayId}">Fortsätt <b data-clock>${clock((Date.now() - s.start) / 1000)}</b></a>` : `<button class="btn" id="start">Starta pass</button>`}</div></div></section>
 
@@ -369,6 +385,7 @@ function viewHome() {
       ${wts.length > 1 ? `<div class="${bodyKg() - wts[0].kg <= 0 ? 'good' : 'badv'}">${signed(bodyKg() - wts[0].kg, ' kg')} sedan start</div>` : `<div class="muted">Lägg in din vikt</div>`}</a>
     <div class="card"><div class="muted">Kalorier i veckan</div><div class="big">≈ ${fmt(w.kcal, 0)}</div><div class="muted">förra veckan ≈ ${fmt(weekStats(new Date(Date.now() - 7 * DAY_MS)).kcal, 0)}</div></div></div></section>
 
+  ${data.sessions.some(x => x.end) ? `<section><h3>Senaste pass <a href="#/historik" style="font-family:Barlow,sans-serif;font-size:14px;font-weight:500">Visa alla</a></h3><div class="card list">${data.sessions.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 3).map(sessionRow).join('')}</div></section>` : ''}
   ${recs.length ? `<section><h3>Senaste rekord</h3><div class="card list">${recs.map(r => `<a href="#/ovning/${r.e.id}"><span>${esc(r.e.name)}${ymd(r.at) === ymd(now) ? '<span class="badge">Idag</span>' : ''}</span><em>${fmt(r.kg)} kg × ${r.r}</em></a>`).join('')}</div></section>` : ''}`;
 
   $('#note').onclick = () => { noteIdx = (noteIdx + 1) % ns.length; $('#noteText').textContent = ns[noteIdx]; };
@@ -401,15 +418,19 @@ function viewDay(dayId) {
     ${d.exercises.map(e => {
       const done = mine ? doneSets(s, e.id).length : 0, sg = suggestion(e);
       const right = mine && done ? `${done}/${e.sets} ✓` : sg ? (sg.up ? `▲ ${fmt(sg.kg)} kg` : `${fmt(sg.last.best)} kg`) : '';
-      return `<a href="#/ovning/${e.id}" class="${mine && done >= e.sets ? 'done' : ''}"><img src="${e.img}" alt="" loading="lazy">
+      return `<a href="#/ovning/${e.id}" class="${mine && done >= e.sets ? 'done' : ''}"><img src="${imgSrc(e)}" alt="" loading="lazy">
         <span class="t"><b>${esc(e.name)}</b><small>${target(e)} · vila ${e.rest} s</small></span><span class="st">${right}</span></a>`;
-    }).join('')}</div></section>
-  ${mine ? `<section><button class="btn go" id="end2">Avsluta pass</button></section>` : ''}`;
+    }).join('')}</div><a class="add" href="#/ny/${d.id}" style="display:block;text-align:center">+ Lägg till egen övning</a></section>
+  ${mine ? `<section><button class="btn go" id="end2">Avsluta pass</button><button class="linkbtn" id="cancel" style="width:100%;color:var(--bad)">Avbryt passet utan att spara</button></section>` : ''}`;
 
   const start = $('#start'); if (start) start.onclick = () => { if (ensureSession(d)) viewDay(d.id); };
   const end = () => { if (confirm('Avsluta och spara passet?')) { endSession(); location.hash = '#/'; } };
   if ($('#end')) $('#end').onclick = end;
   if ($('#end2')) $('#end2').onclick = end;
+  if ($('#cancel')) $('#cancel').onclick = () => {
+    if (!confirm('Avbryta passet? Allt som loggats i passet tas bort.')) return;
+    deleteSession(active()); location.hash = '#/';
+  };
   if ($('#wuedit')) $('#wuedit').onclick = () => { s.warmup = null; save(); viewDay(d.id); };
   if ($('#wusave')) {
     const upd = () => { const w = { type: $('#wutype').value, min: +$('#wumin').value || 0 }; $('#wukcal').textContent = `≈ ${fmt(warmupKcal(w), 0)} kcal vid ${fmt(bodyKg())} kg kroppsvikt`; };
@@ -449,21 +470,35 @@ function viewExercise(exId) {
   <header class="top"><a class="back" href="#/pass/${d.id}" aria-label="Tillbaka till ${esc(d.name)}">‹</a>
     <div class="t"><b>${esc(d.name)}</b><span>Övning ${idx + 1} av ${d.exercises.length}</span></div>
     <div class="dots" aria-hidden="true">${d.exercises.map((_, i) => `<i class="${i === idx ? 'on' : ''}"></i>`).join('')}</div></header>
-  <div class="hero"><img src="${e.img}" alt="${esc(e.name)}"><div class="cap"><h1>${esc(e.name)}</h1>
-    <div class="chips">${e.muscles.split(', ').map(m => `<span>${esc(m)}</span>`).join('')}</div></div></div>
+  <div class="hero"><img src="${imgSrc(e)}" alt="${esc(e.name)}">
+    <label class="photo">Byt bild<input type="file" accept="image/*" id="photoIn" hidden></label>
+    <div class="cap"><h1>${esc(e.name)}</h1>
+    <div class="chips">${(e.muscles || '').split(',').map(m => m.trim()).filter(Boolean).map(m => `<span>${esc(m)}</span>`).join('')}</div></div></div>
+  ${e.custom ? `<a class="linkbtn" href="#/andra/${e.id}" style="display:inline-block">Ändra eller ta bort övningen</a>` : ''}
   <div class="target"><div><small>Mål</small><b>${target(e)}</b></div><div><small>Vila</small><b>${e.rest} s</b></div>
     <div><small>Förra passet</small><b>${sg ? fmt(sg.last.best) + ' kg' : '–'}</b></div></div>
   ${sg && sg.up ? `<div class="nudge"><strong>Dags att höja.</strong> Du klarade ${e.reps[1]} reps i alla set förra gången. Vikten är uppräknad till ${fmt(sg.kg)} kg (${signed(sg.kg - sg.last.best, ' kg')}).</div>` : ''}
-  <details class="tip"><summary>Teknik att tänka på</summary><p style="margin:8px 0 0">${esc(e.tip)} Träna med 1–2 reps i reserv på basövningarna.</p></details>
+  ${e.tip ? `<details class="tip"><summary>Teknik att tänka på</summary><p style="margin:8px 0 0">${esc(e.tip)}${e.custom ? '' : ' Träna med 1–2 reps i reserv på basövningarna.'}</p></details>` : ''}
 
   <section><h3>Dagens set <span id="vol"></span></h3><div id="sets"></div><button class="add" id="addSet">+ Lägg till set</button></section>
   <section><h3>Utveckling <span>tyngsta set</span></h3>
     ${df ? `<div class="diff">${Object.entries(df).map(([k, v]) => `<div><small>${k}</small><b class="${v > 0 ? 'good' : v < 0 ? 'badv' : ''}">${signed(v)}</b></div>`).join('')}</div>` : `<p class="muted">Utvecklingen visas efter två loggade pass.</p>`}
     ${chart}</section>
   ${h.length ? `<section><h3>Tidigare pass</h3><div class="card list">${h.slice(0, 6).map(x => `<div><span>${DAYNAMES[new Date(x.s.start).getDay()].slice(0, 3)} ${new Date(x.s.start).getDate()} ${MONTHS[new Date(x.s.start).getMonth()].slice(0, 3)}</span><em>${fmt(x.best)} kg · ${x.sets.map(y => y.r).join(', ')}</em></div>`).join('')}</div></section>` : ''}
-  ${nextEx ? `<section><h3>Nästa övning</h3><div class="exlist"><a href="#/ovning/${nextEx.id}"><img src="${nextEx.img}" alt=""><span class="t"><b>${esc(nextEx.name)}</b><small>${target(nextEx)} · vila ${nextEx.rest} s</small></span><span class="st">›</span></a></div></section>`
+  ${nextEx ? `<section><h3>Nästa övning</h3><div class="exlist"><a href="#/ovning/${nextEx.id}"><img src="${imgSrc(nextEx)}" alt=""><span class="t"><b>${esc(nextEx.name)}</b><small>${target(nextEx)} · vila ${nextEx.rest} s</small></span><span class="st">›</span></a></div></section>`
     : `<section><a class="btn ghost" href="#/pass/${d.id}">Tillbaka till passet</a></section>`}`;
 
+  $('#photoIn').onchange = async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    toast('Laddar upp bilden …');
+    try {
+      const k = await uploadPhoto(f);
+      const old = e.custom ? e.photo : (data.overrides[e.id] || {}).photo;
+      if (e.custom) data.custom.find(c => c.id === e.id).photo = k; else data.overrides[e.id] = { photo: k };
+      save(); if (old) deletePhoto(old);
+      $('.hero img').src = photoUrl(k); toast('Bilden är sparad');
+    } catch { toast('Det gick inte att ladda upp bilden. Försök igen.'); }
+  };
   const drawSets = () => {
     $('#sets').innerHTML = sets.map((x, i) => `<div class="set ${x.done ? 'done' : ''}"><span class="n">${i + 1}</span>
       <div class="step"><button data-i="${i}" data-k="kg" data-v="-1" aria-label="Minska vikt">−</button><label><input data-i="${i}" data-k="kg" type="number" inputmode="decimal" step="0.5" value="${x.kg || ''}" placeholder="0"><small>kg</small></label><button data-i="${i}" data-k="kg" data-v="1" aria-label="Öka vikt">+</button></div>
@@ -497,6 +532,156 @@ function viewExercise(exId) {
     persist(); drawSets();
   });
   $('#addSet').onclick = () => { const l = sets[sets.length - 1] || { kg: 0, r: e.reps[1] }; sets.push({ kg: l.kg, r: l.r, done: false }); persist(); drawSets(); };
+}
+
+/* foton */
+async function resizeImage(file, max = 1000) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.78).split(',')[1];
+  } finally { URL.revokeObjectURL(url); }
+}
+async function uploadPhoto(file) {
+  const t = await getToken(); if (!t) throw new Error('noauth');
+  const body = JSON.stringify({ data: await resizeImage(file) });
+  const r = await fetch('/.netlify/functions/photo', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t }, body });
+  if (!r.ok) throw new Error('upload');
+  return (await r.json()).k;
+}
+async function deletePhoto(k) {
+  try { const t = await getToken(); await fetch(photoUrl(k), { method: 'DELETE', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignoreras */ }
+}
+
+/* egen övning */
+function viewExerciseForm(dayId, exId) {
+  const editing = exId ? data.custom.find(c => c.id === exId) : null;
+  if (exId && !editing) { location.hash = '#/pass'; return; }
+  const d = dayById(editing ? editing.dayId : dayId) || dayById('d1');
+  const e = editing || { name: '', muscles: '', sets: 3, reps: [10, 12], rest: 60, tip: '', photo: null };
+  let file = null;
+  app.innerHTML = `
+  <header class="top"><a class="back" href="${editing ? '#/ovning/' + e.id : '#/pass/' + d.id}" aria-label="Tillbaka">‹</a>
+    <div class="t"><b>${editing ? 'Ändra övning' : 'Ny övning'}</b><span>${esc(d.name)}</span></div></header>
+  <label class="photopick"><img id="prev" src="${imgSrc(e)}" alt=""><span id="plabel">${e.photo ? 'Byt foto' : 'Ta foto eller välj bild'}</span><input id="file" type="file" accept="image/*" hidden></label>
+  <div class="card" style="margin-top:12px">
+    <label class="field"><span>Namn på övningen</span><input id="name" value="${esc(e.name)}" placeholder="Utfallsgång med hantlar"></label>
+    <label class="field"><span>Muskelgrupp</span><input id="muscles" value="${esc(e.muscles)}" placeholder="Ben, säte"></label>
+    <div class="grid3">
+      <label class="field"><span>Set</span><input id="sets" type="number" inputmode="numeric" min="1" max="10" value="${e.sets}"></label>
+      <label class="field"><span>Reps från</span><input id="r0" type="number" inputmode="numeric" min="1" max="100" value="${e.reps[0]}"></label>
+      <label class="field"><span>Reps till</span><input id="r1" type="number" inputmode="numeric" min="1" max="100" value="${e.reps[1]}"></label>
+    </div>
+    <label class="field"><span>Vila mellan set (sekunder)</span><input id="rest" type="number" inputmode="numeric" min="0" max="600" value="${e.rest}"></label>
+    <label class="field" style="margin:0"><span>Beskrivning / teknik</span><textarea id="tip" placeholder="Långa steg, knät rakt över foten.">${esc(e.tip)}</textarea></label>
+  </div>
+  <section><button class="btn" id="save">Spara övning</button>
+    ${editing ? '<button class="btn ghost danger" id="del" style="margin-top:10px">Ta bort övningen</button>' : ''}</section>`;
+  $('#file').onchange = ev => {
+    file = ev.target.files[0] || null;
+    if (file) { $('#prev').src = URL.createObjectURL(file); $('#plabel').textContent = 'Byt foto'; }
+  };
+  $('#save').onclick = async () => {
+    const name = $('#name').value.trim();
+    if (!name) { toast('Ge övningen ett namn'); $('#name').focus(); return; }
+    const num = (id, lo, hi, def) => { const v = Math.round(+$(id).value); return v >= lo && v <= hi ? v : def; };
+    let r0 = num('#r0', 1, 100, 10), r1 = num('#r1', 1, 100, r0);
+    if (r1 < r0) [r0, r1] = [r1, r0];
+    const btn = $('#save'); btn.disabled = true; btn.textContent = 'Sparar …';
+    let photo = e.photo || null;
+    if (file) {
+      try { const k = await uploadPhoto(file); if (photo) deletePhoto(photo); photo = k; }
+      catch { toast('Bilden kunde inte laddas upp. Övningen sparas utan ny bild.'); }
+    }
+    const fields = { name, muscles: $('#muscles').value.trim(), sets: num('#sets', 1, 10, 3), reps: [r0, r1], rest: num('#rest', 0, 600, 60), tip: $('#tip').value.trim(), photo };
+    if (editing) Object.assign(editing, fields);
+    else data.custom.push({ id: 'c' + Date.now(), dayId: d.id, custom: true, ...fields });
+    save(); toast(editing ? 'Övningen är uppdaterad' : 'Övningen är tillagd');
+    location.hash = editing ? '#/ovning/' + e.id : '#/pass/' + d.id;
+  };
+  if ($('#del')) $('#del').onclick = () => {
+    if (!confirm(`Ta bort ${e.name}? Tidigare loggade set finns kvar i historiken.`)) return;
+    data.custom = data.custom.filter(c => c !== editing);
+    if (editing.photo) deletePhoto(editing.photo);
+    save(); toast('Övningen är borttagen'); location.hash = '#/pass/' + d.id;
+  };
+}
+
+/* historik */
+const shortDate = t => { const d = new Date(t); return `${DAYNAMES[d.getDay()].slice(0, 3)} ${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`; };
+const timeOf = t => new Date(t).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+function sessionRow(s) {
+  const d = dayById(s.dayId);
+  return `<a href="#/logg/${s.id}"><span>${shortDate(s.start)} <span class="muted">${timeOf(s.start)}</span><br><small class="muted">${esc(d ? d.short : 'Pass')}</small></span>
+    <em>${s.end ? hm(durMin(s)) : '<span class="badge">Pågår</span>'}<br><small class="muted" style="font-weight:400">${fmt(sessionVolume(s) / 1000)} ton</small></em></a>`;
+}
+function deleteSession(s) {
+  if (!s) return;
+  if (!s.end) { stopRest(); keepAwake(false); }
+  data.sessions = data.sessions.filter(x => x !== s); save();
+}
+function viewHistory() {
+  const list = data.sessions.slice().sort((a, b) => b.start - a.start);
+  let month = '', html = '';
+  for (const s of list) {
+    const d = new Date(s.start), m = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+    if (m !== month) { if (html) html += '</div>'; html += `<h3 class="mhead">${m.charAt(0).toUpperCase() + m.slice(1)}</h3><div class="card list">`; month = m; }
+    html += sessionRow(s);
+  }
+  if (html) html += '</div>';
+  app.innerHTML = `<header class="hdr"><div><small>${list.length} pass totalt</small><h1>Historik</h1></div></header>
+    ${html || '<div class="card"><p style="margin:0">Här hamnar dina pass när du loggat det första. Starta ett pass under <a href="#/pass">Pass</a>.</p></div>'}`;
+}
+function viewSession(sid) {
+  const s = data.sessions.find(x => x.id === sid);
+  if (!s) { location.hash = '#/historik'; return; }
+  const d = dayById(s.dayId), cur = active();
+  const local = t => new Date(t - new Date(t).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const exRows = Object.keys(s.sets).map(k => {
+    const e = exById(k), sets = doneSets(s, k); if (!sets.length) return '';
+    return `<div><span>${esc(e ? e.name : 'Borttagen övning')}</span><em style="font-weight:500">${sets.map(x => `${fmt(x.kg)}×${x.r}`).join(', ')}</em></div>`;
+  }).join('');
+  const wu = s.warmup && WARMUPS.find(x => x.id === s.warmup.type);
+  app.innerHTML = `
+  <header class="top"><a class="back" href="#/historik" aria-label="Tillbaka till historiken">‹</a>
+    <div class="t"><b>${esc(d ? d.name : 'Pass')}</b><span>${shortDate(s.start)} kl. ${timeOf(s.start)}</span></div></header>
+  <div class="two">
+    <div class="card"><div class="muted">Tid</div><div class="big">${hm(durMin(s))}</div></div>
+    <div class="card"><div class="muted">Kalorier · volym</div><div class="big">≈ ${fmt(sessionKcal(s), 0)}</div><div class="muted">${fmt(sessionVolume(s) / 1000)} ton</div></div>
+  </div>
+  ${wu ? `<p class="muted">Uppvärmning: ${esc(wu.name)}, ${s.warmup.min} min</p>` : ''}
+  <section><h3>Loggade set</h3><div class="card list">${exRows || '<div><span class="muted">Inga set loggade</span></div>'}</div></section>
+  <section><h3>Ändra passet</h3><div class="card">
+    <label class="field"><span>Start</span><input id="st" type="datetime-local" value="${local(s.start)}"></label>
+    ${s.end ? `<label class="field"><span>Längd (minuter)</span><input id="len" type="number" inputmode="numeric" min="1" max="600" value="${durMin(s)}"></label>` : '<p class="muted">Passet pågår. Längden sätts när du avslutar.</p>'}
+    <button class="btn small" id="saveS">Spara ändringar</button></div></section>
+  <section>
+    ${s.end && !cur ? '<button class="btn ghost" id="resume">Återuppta passet</button>' : ''}
+    ${!s.end ? `<a class="btn go" href="#/pass/${s.dayId}">Gå till pågående pass</a>` : ''}
+    <button class="btn ghost danger" id="delS" style="margin-top:10px">Ta bort passet</button>
+  </section>`;
+  $('#saveS').onclick = () => {
+    const st = new Date($('#st').value).getTime();
+    if (!st) return toast('Ange en giltig starttid');
+    if (s.end) {
+      const len = Math.round(+$('#len').value);
+      if (!(len >= 1 && len <= 600)) return toast('Ange längd mellan 1 och 600 minuter');
+      s.end = st + len * 60000;
+    }
+    s.start = st; save(); toast('Passet är uppdaterat'); viewSession(s.id);
+  };
+  if ($('#resume')) $('#resume').onclick = () => {
+    if (!confirm('Återuppta passet? Timern fortsätter från passets start.')) return;
+    s.end = null; save(); keepAwake(true); location.hash = '#/pass/' + s.dayId;
+  };
+  $('#delS').onclick = () => {
+    if (!confirm('Ta bort passet? Det går inte att ångra.')) return;
+    deleteSession(s); toast('Passet är borttaget'); location.hash = '#/historik';
+  };
 }
 
 /* profil */
