@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#0E2240">
 <title>Träningsloggen</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/icons/icon-192.png">
-<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -24,6 +24,20 @@
   <b id="rt">1:30</b><div class="bar"><i id="rb"></i></div><button id="rplus">+15 s</button><button id="rskip">Hoppa över</button>
 </div></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+/* Visar fel direkt på skärmen i stället för att fastna på "Laddar …" */
+(function(){
+  function show(msg){
+    var el=document.getElementById('app');
+    if(!el || el.dataset.err) return;
+    el.dataset.err='1';
+    el.innerHTML='<div style="padding:30vh 8px 0;font-size:15px"><p><b>Appen kunde inte starta.</b></p><p style="word-break:break-word;color:var(--bad)">'+String(msg).replace(/</g,'&lt;')+'</p><p class="muted">Ta en skärmdump och skicka till Claude.</p></div>';
+  }
+  window.addEventListener('error',function(e){var t=e.target;if(t&&t!==window&&t.tagName!=='SCRIPT')return;show((e.message||'Kunde inte ladda skript')+' – '+(e.filename||t&&t.src||'')+(e.lineno?':'+e.lineno:''));},true);
+  window.addEventListener('unhandledrejection',function(e){show('Promise: '+(e.reason&&e.reason.message||e.reason));});
+  setTimeout(function(){var el=document.getElementById('app');if(el&&/Laddar/.test(el.textContent))show('Timeout: app.js startade inte inom 10 s. Kontrollera att app.js och program.js finns i repot.');},10000);
+})();
+</script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

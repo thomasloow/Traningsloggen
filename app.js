@@ -145,14 +145,14 @@ function endSession(silent) {
   if (!silent) toast(`Pass sparat: ${hm(durMin(s))} · ≈ ${fmt(sessionKcal(s), 0)} kcal · ${fmt(sessionVolume(s) / 1000)} ton`);
 }
 
-function history(exId) {
+function exHistory(exId) {
   return data.sessions.filter(s => doneSets(s, exId).length).sort((a, b) => b.start - a.start)
     .map(s => { const sets = doneSets(s, exId); return { s, sets, best: Math.max(...sets.map(x => x.kg)) }; });
 }
 const kgStep = kg => kg < 20 ? 1 : 2.5;
 function suggestion(e) {
   const cur = active();
-  const h = history(e.id).filter(x => x.s !== cur);
+  const h = exHistory(e.id).filter(x => x.s !== cur);
   if (!h.length) return null;
   const last = h[0];
   const hit = last.sets.length >= e.sets && last.sets.every(x => x.r >= e.reps[1]) && last.best > 0;
@@ -168,7 +168,7 @@ function prefill(e) {
   return Array.from({ length: Math.max(e.sets, ls.length) }, (_, i) => { const x = ls[i] || ls[ls.length - 1]; return { kg: x.kg, r: x.r, done: false }; });
 }
 function diffs(exId) {
-  const h = history(exId); if (h.length < 2) return null;
+  const h = exHistory(exId); if (h.length < 2) return null;
   const latest = h[0], out = { Pass: latest.best - h[1].best };
   for (const [k, days] of [['Vecka', 7], ['Månad', 30], ['År', 365]]) {
     const cut = latest.s.start - days * DAY_MS;
@@ -180,7 +180,7 @@ function diffs(exId) {
 function records() {
   const out = [];
   for (const e of allEx) {
-    const h = history(e.id).slice().reverse();
+    const h = exHistory(e.id).slice().reverse();
     if (h.length < 2) continue;
     let best = h[0].best, rec = null;
     for (const x of h.slice(1)) if (x.best > best) { best = x.best; rec = x; }
@@ -426,7 +426,7 @@ function viewDay(dayId) {
 function viewExercise(exId) {
   const e = exById(exId); if (!e) return viewHome();
   const d = dayOfEx(exId), idx = d.exercises.indexOf(e), nextEx = d.exercises[idx + 1];
-  const sg = suggestion(e), df = diffs(exId), h = history(exId);
+  const sg = suggestion(e), df = diffs(exId), h = exHistory(exId);
   const s0 = active();
   if (s0 && s0.dayId === d.id && !s0.sets[exId]) s0.sets[exId] = drafts[exId] || prefill(e);
   let sets = s0 && s0.dayId === d.id ? s0.sets[exId] : (drafts[exId] = drafts[exId] || prefill(e));
@@ -556,7 +556,7 @@ async function boot() {
 (async () => {
   const m = location.hash.match(/(invite|recovery|confirmation)_token=([^&]+)/);
   if (m) {
-    history.replaceState(null, '', location.pathname + '#/');
+    window.history.replaceState(null, '', location.pathname + '#/');
     if (m[1] === 'invite') pending = { kind: 'invite', token: m[2] };
     else if (m[1] === 'recovery') { try { await verify({ token: m[2], type: 'recovery' }); pending = { kind: 'recovery' }; } catch { toast('Länken har gått ut. Begär en ny.'); } }
     else { try { await verify({ token: m[2], type: 'signup' }); } catch { toast('Länken har gått ut.'); } }
