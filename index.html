@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E2240">
+<title>Träningsloggen</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main id="app"><p class="muted" style="padding-top:40vh;text-align:center">Laddar …</p></main>
+<nav id="nav" hidden aria-label="Huvudmeny"><div class="in">
+  <a href="#/" data-r="hem"><span class="ico" aria-hidden="true">⌂</span>Hem</a>
+  <a href="#/pass" data-r="pass"><span class="ico" aria-hidden="true">🏋</span>Pass</a>
+  <a href="#/profil" data-r="profil"><span class="ico" aria-hidden="true">👤</span>Profil</a>
+</div></nav>
+<div class="rest" id="rest" role="status" aria-live="polite"><div class="in">
+  <b id="rt">1:30</b><div class="bar"><i id="rb"></i></div><button id="rplus">+15 s</button><button id="rskip">Hoppa över</button>
+</div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
