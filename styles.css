@@ -176,3 +176,6 @@ nav .ico{font-size:21px;line-height:1.1}
 .btn:disabled{opacity:.6}
 .mhead{margin:20px 0 8px;font-weight:600;font-size:20px}
 .list small{font-size:12px}
+.gbar{height:12px;border-radius:6px;background:var(--sky);overflow:hidden;margin-top:10px}
+.gbar i{display:block;height:100%;background:var(--go);border-radius:6px}
+.xbtn{background:none;border:0;color:var(--mute);font-size:14px;padding:4px 0 4px 12px}

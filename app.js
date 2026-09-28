@@ -376,14 +376,12 @@ function viewHome() {
     <div class="body"><h4>${esc(nextDay.name)}</h4><p>${esc(nextDay.exercises.slice(0, 3).map(e => e.name).join(', '))} med mera.</p>
     ${s ? `<a class="btn go" href="#/pass/${s.dayId}">Fortsätt <b data-clock>${clock((Date.now() - s.start) / 1000)}</b></a>` : `<button class="btn" id="start">Starta pass</button>`}</div></div></section>
 
+  <section><h3>Mot målvikten</h3>${goalCard()}</section>
+
   <section><h3>Träningstid <span>senaste 8 veckorna</span></h3><div class="card">
     <div class="bars" role="img" aria-label="Träningstid per vecka">${weeks.map(x => `<div><i style="height:${Math.round(x.min / maxMin * 100)}%" title="${hm(x.min)}"></i><small>v${x.wk}</small></div>`).join('')}</div>
     <p class="muted" style="margin:10px 0 0">Snitt ${hm(avg)} per vecka de senaste 7 hela veckorna.</p></div></section>
 
-  <section><h3>Kroppen</h3><div class="two">
-    <a class="card" href="#/profil" style="color:var(--ink)"><div class="muted">Vikt nu</div><div class="big">${wts.length ? fmt(bodyKg()) + ' kg' : '–'}</div>
-      ${wts.length > 1 ? `<div class="${bodyKg() - wts[0].kg <= 0 ? 'good' : 'badv'}">${signed(bodyKg() - wts[0].kg, ' kg')} sedan start</div>` : `<div class="muted">Lägg in din vikt</div>`}</a>
-    <div class="card"><div class="muted">Kalorier i veckan</div><div class="big">≈ ${fmt(w.kcal, 0)}</div><div class="muted">förra veckan ≈ ${fmt(weekStats(new Date(Date.now() - 7 * DAY_MS)).kcal, 0)}</div></div></div></section>
 
   ${data.sessions.some(x => x.end) ? `<section><h3>Senaste pass <a href="#/historik" style="font-family:Barlow,sans-serif;font-size:14px;font-weight:500">Visa alla</a></h3><div class="card list">${data.sessions.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 3).map(sessionRow).join('')}</div></section>` : ''}
   ${recs.length ? `<section><h3>Senaste rekord</h3><div class="card list">${recs.map(r => `<a href="#/ovning/${r.e.id}"><span>${esc(r.e.name)}${ymd(r.at) === ymd(now) ? '<span class="badge">Idag</span>' : ''}</span><em>${fmt(r.kg)} kg × ${r.r}</em></a>`).join('')}</div></section>` : ''}`;
@@ -392,6 +390,53 @@ function viewHome() {
   $$('.day').forEach(b => b.onclick = () => { $('#dayinfo').textContent = b.dataset.info; });
   const today = $('.day.today'); if (today) $('#dayinfo').textContent = today.dataset.info;
   const st = $('#start'); if (st) st.onclick = () => { startSession(nx.day.id); location.hash = '#/pass/' + nx.day.id; };
+}
+
+/* målvikt */
+function goalCard() {
+  const p = data.profile, w = p.weights;
+  if (!p.goalKg) return `<a class="card" href="#/profil" style="display:block;color:var(--ink)"><div class="big">Sätt ett mål</div><div class="muted">Lägg in målvikt och måldatum under Profil.</div></a>`;
+  if (!w.length) return `<a class="card" href="#/profil" style="display:block;color:var(--ink)"><div class="muted">Mål ${fmt(p.goalKg)} kg</div><div class="big">Lägg in din vikt</div><div class="muted">Startvikten blir din första vägning.</div></a>`;
+  const start = w[0].kg, now = bodyKg(), goal = p.goalKg, down = goal < start;
+  const total = Math.abs(start - goal) || 1;
+  const done = down ? start - now : now - start;
+  const pct = Math.max(0, Math.min(100, done / total * 100));
+  const left = Math.round((down ? now - goal : goal - now) * 10) / 10;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const gd = p.goalDate ? new Date(p.goalDate + 'T00:00:00') : null;
+  const daysLeft = gd ? Math.ceil((gd - today) / DAY_MS) : null;
+  const lines = [];
+  if (left <= 0) lines.push(`<p class="good" style="margin:10px 0 0">Målet är nått. Snyggt jobbat!</p>`);
+  else {
+    lines.push(`<p style="margin:10px 0 0"><b>${fmt(left)} kg kvar</b>${daysLeft != null ? (daysLeft > 0 ? ` · ${daysLeft} dagar till ${gd.getDate()} ${MONTHS[gd.getMonth()]}` : ' · måldatumet har passerat') : ''}</p>`);
+    if (daysLeft > 0) {
+      const need = left / (daysLeft / 7);
+      lines.push(`<p class="muted" style="margin:4px 0 0">Krävs ${fmt(need, 2)} kg per vecka${need > 1 ? '. <span class="badv">Högt tempo – risk att tappa muskler. Överväg ett senare datum.</span>' : '.'}</p>`);
+    }
+    const span = (new Date(w[w.length - 1].date) - new Date(w[0].date)) / DAY_MS;
+    if (w.length >= 2 && span >= 7) {
+      const rate = (now - start) / span * 7, prog = down ? -rate : rate;
+      let txt = `Din takt: ${signed(rate, ' kg')} per vecka.`;
+      if (prog > 0.02) { const eta = new Date(Date.now() + left / prog * 7 * DAY_MS); txt += ` I den takten når du målet ${eta.getDate()} ${MONTHS[eta.getMonth()]}${eta.getFullYear() !== today.getFullYear() ? ' ' + eta.getFullYear() : ''}.`; }
+      else txt += ' Takten går inte mot målet just nu.';
+      lines.push(`<p class="muted" style="margin:4px 0 0">${txt}</p>`);
+    } else lines.push(`<p class="muted" style="margin:4px 0 0">Prognosen visas när du vägt dig med minst en veckas mellanrum.</p>`);
+  }
+  let chart = '';
+  if (w.length >= 2) {
+    const pts = w.slice(-20), ys = [...pts.map(x => x.kg), goal], lo = Math.min(...ys) - 0.5, hi = Math.max(...ys) + 0.5;
+    const y = v => 8 + (hi - v) / (hi - lo) * 64, xs = i => 6 + i * (308 / (pts.length - 1));
+    chart = `<svg viewBox="0 0 320 80" style="width:100%;height:auto;display:block;margin-top:10px" role="img" aria-label="Viktkurva mot målvikt">
+      <line x1="0" x2="320" y1="${y(goal)}" y2="${y(goal)}" stroke="var(--go)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="316" y="${y(goal) - 4}" text-anchor="end" font-size="11" fill="var(--go)">mål ${fmt(goal)}</text>
+      <polyline fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linejoin="round" points="${pts.map((x, i) => xs(i) + ',' + y(x.kg)).join(' ')}"/>
+      <circle cx="${xs(pts.length - 1)}" cy="${y(now)}" r="4.5" fill="var(--blue)"/></svg>`;
+  }
+  return `<a class="card" href="#/profil" style="display:block;color:var(--ink)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><span class="muted">Start ${fmt(start)} kg</span><span class="big">${fmt(now)} kg</span><span class="muted">Mål ${fmt(goal)} kg</span></div>
+    <div class="gbar" role="img" aria-label="${Math.round(pct)} procent av vägen till målet"><i style="width:${pct}%"></i></div>
+    <div class="muted" style="text-align:right;margin-top:4px">${Math.round(pct)} % av vägen</div>
+    ${lines.join('')}${chart}</a>`;
 }
 
 /* dagvy */
@@ -433,7 +478,7 @@ function viewDay(dayId) {
   };
   if ($('#wuedit')) $('#wuedit').onclick = () => { s.warmup = null; save(); viewDay(d.id); };
   if ($('#wusave')) {
-    const upd = () => { const w = { type: $('#wutype').value, min: +$('#wumin').value || 0 }; $('#wukcal').textContent = `≈ ${fmt(warmupKcal(w), 0)} kcal vid ${fmt(bodyKg())} kg kroppsvikt`; };
+    const upd = () => { const w = { type: $('#wutype').value, min: +$('#wumin').value || 0 }; $('#wukcal').textContent = `≈ ${fmt(warmupKcal(w), 0)} kcal vid ${fmt(bodyKg())} kg ${data.profile.weights.length ? '(din profilvikt)' : '(standardvärde – lägg in din vikt under Profil)'}`; };
     $('#wutype').onchange = upd; $('#wumin').oninput = upd; upd();
     $('#wusave').onclick = () => {
       const min = Math.round(+$('#wumin').value); if (!min) return toast('Ange antal minuter');
@@ -694,11 +739,16 @@ function viewProfile() {
     <label class="field"><span>Namn</span><input id="name" value="${esc(p.name)}" autocomplete="name"></label>
     <label class="field" style="margin:0"><span>Längd (cm)</span><input id="height" type="number" inputmode="numeric" value="${p.heightCm || ''}"></label></div></section>
 
+  <section><h3>Målvikt</h3><div class="card"><div class="two">
+    <label class="field" style="margin:0"><span>Målvikt (kg)</span><input id="goalKg" type="number" inputmode="decimal" step="0.1" value="${p.goalKg || ''}" placeholder="80,0"></label>
+    <label class="field" style="margin:0"><span>Måldatum</span><input id="goalDate" type="date" value="${p.goalDate || ''}"></label></div>
+    <p class="muted" style="margin:10px 0 0">Utvecklingen mot målet visas på startsidan. Kalorierna räknas från din senaste vägning.</p></div></section>
+
   <section><h3>Vikt <span>${w.length ? `start ${fmt(w[0].kg)} kg · nu ${fmt(bodyKg())} kg` : ''}</span></h3><div class="card">
     <div class="weigh"><label class="field" style="margin:0"><span>Dagens vikt (kg)</span><input id="kg" type="number" inputmode="decimal" step="0.1" placeholder="${w.length ? fmt(bodyKg()) : '85,0'}"></label>
     <button class="btn small" id="addkg">Spara vägning</button></div>
     ${w.length > 1 ? `<p style="margin:10px 0 0" class="${bodyKg() - w[0].kg <= 0 ? 'good' : 'badv'}">${signed(bodyKg() - w[0].kg, ' kg')} sedan start${bmi ? ` <span class="muted">· BMI ${fmt(bmi)}</span>` : ''}</p>` : ''}
-    ${w.length ? `<div class="list" style="margin-top:6px">${w.slice(-6).reverse().map(x => `<div><span>${x.date}</span><em>${fmt(x.kg)} kg</em></div>`).join('')}</div>` : ''}
+    ${w.length ? `<div class="list" style="margin-top:6px">${w.slice(-6).reverse().map(x => `<div><span>${x.date}</span><span><em>${fmt(x.kg)} kg</em><button class="xbtn" data-del="${x.date}" aria-label="Ta bort vägningen ${x.date}">✕</button></span></div>`).join('')}</div>` : ''}
     <p class="muted" style="margin:10px 0 0">Vikten används för att räkna kalorier.</p></div></section>
 
   <section><h3>Veckoschema <span>morgonpass 06–09</span></h3><div class="card sched">
@@ -712,6 +762,17 @@ function viewProfile() {
 
   $('#name').onchange = ev => { p.name = ev.target.value.trim(); save(); };
   $('#height').onchange = ev => { p.heightCm = Math.round(+ev.target.value) || null; save(); viewProfile(); };
+  $('#goalKg').onchange = ev => {
+    const v = parseFloat(String(ev.target.value).replace(',', '.'));
+    p.goalKg = v >= 30 && v <= 250 ? Math.round(v * 10) / 10 : null;
+    if (p.goalKg && !p.goalDate) p.goalDate = GOAL_DATE;
+    save(); toast(p.goalKg ? 'Målvikten är sparad' : 'Målvikten är borttagen'); viewProfile();
+  };
+  $('#goalDate').onchange = ev => { p.goalDate = ev.target.value || null; save(); toast('Måldatumet är sparat'); };
+  $$('.xbtn[data-del]').forEach(b => b.onclick = () => {
+    if (!confirm(`Ta bort vägningen ${b.dataset.del}?`)) return;
+    p.weights = w.filter(x => x.date !== b.dataset.del); data.profile.weights = p.weights; save(); viewProfile();
+  });
   $('#addkg').onclick = () => {
     const kg = parseFloat(String($('#kg').value).replace(',', '.'));
     if (!kg || kg < 30 || kg > 250) return toast('Ange en vikt i kg');
