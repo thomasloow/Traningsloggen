@@ -1,5 +1,5 @@
 // Träningsloggen service worker – cachar appen så att den startar snabbt och fungerar på gymmet utan täckning.
-const CACHE = 'tl-v4';
+const CACHE = 'tl-v5';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/program.js', '/manifest.webmanifest', '/icon-192.png', '/d1-1.jpg','/d1-2.jpg','/d1-3.jpg','/d1-4.jpg','/d1-5.jpg','/d1-6.jpg','/d2-1.jpg','/d2-2.jpg','/d2-3.jpg','/d2-4.jpg','/d2-5.jpg','/d2-6.jpg','/d3-1.jpg','/d3-2.jpg','/d3-3.jpg','/d3-4.jpg','/d3-5.jpg','/d3-6.jpg','/d4-1.jpg','/d4-2.jpg','/d4-3.jpg','/d4-4.jpg','/d4-5.jpg','/d4-6.jpg'];
 
 self.addEventListener('install', e => {

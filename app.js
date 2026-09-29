@@ -1,5 +1,15 @@
 import { PROGRAM, WARMUPS, STRENGTH_MET, GOAL_DATE } from './program.js';
 
+// Övrig träning. MET-värden från Compendium of Physical Activities, avrundade.
+const ACTIVITIES = [
+  { id: 'mtb', name: 'Mountainbike', met: 8.5 }, { id: 'bike', name: 'Cykling, lugnt tempo', met: 6.8 }, { id: 'bikefast', name: 'Cykling, högt tempo', met: 10.0 },
+  { id: 'run', name: 'Löpning', met: 9.8 }, { id: 'walk', name: 'Promenad', met: 3.5 }, { id: 'hike', name: 'Vandring', met: 6.0 },
+  { id: 'swim', name: 'Simning', met: 6.0 }, { id: 'padel', name: 'Padel', met: 6.5 }, { id: 'tennis', name: 'Tennis', met: 7.3 },
+  { id: 'golf', name: 'Golf (gående)', met: 4.8 }, { id: 'xc', name: 'Längdskidor', met: 9.0 }, { id: 'alpine', name: 'Utförsåkning', met: 5.3 },
+  { id: 'kayak', name: 'Kajak', met: 5.0 }, { id: 'sail', name: 'Segling', met: 3.0 }, { id: 'spin', name: 'Spinning', met: 7.5 },
+  { id: 'circuit', name: 'Cirkelträning', met: 8.0 }, { id: 'yoga', name: 'Yoga', met: 2.5 }, { id: 'other', name: 'Annat …', met: 5.0 }
+];
+
 /* ---------- hjälpfunktioner ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -84,7 +94,7 @@ function logout() { localStorage.removeItem('tl_auth'); auth = null; user = null
 /* ---------- data och synk ---------- */
 let data = null, saveT = null, dirty = false, synced = true;
 const cacheKey = () => 'tl_data_' + user.id;
-const blank = () => ({ version: 1, profile: { name: user.name || '', heightCm: null, weights: [] }, schedule: { 1: 'd1', 2: 'd2', 3: 'd3', 6: 'd4' }, sessions: [], custom: [], overrides: {}, updatedAt: 0 });
+const blank = () => ({ version: 1, profile: { name: user.name || '', heightCm: null, weights: [] }, schedule: { 1: true, 2: true, 3: true, 6: true }, sessions: [], custom: [], overrides: {}, other: [], updatedAt: 0 });
 async function api(method, body) {
   const t = await getToken();
   if (!t) throw new Error('noauth');
@@ -101,7 +111,7 @@ async function loadData() {
     else if (cached) { dirty = true; push(); }
     synced = true;
   } catch { synced = false; toast('Offline – visar sparad data på telefonen'); }
-  data.custom = data.custom || []; data.overrides = data.overrides || {};
+  data.custom = data.custom || []; data.overrides = data.overrides || {}; data.other = data.other || [];
   localStorage.setItem(cacheKey(), JSON.stringify(data));
 }
 function save() {
@@ -200,10 +210,14 @@ function records() {
   }
   return out.sort((a, b) => b.at - a.at);
 }
+const otherKcal = o => o.kcal != null && o.kcal !== '' ? Math.round(+o.kcal) : Math.round(((ACTIVITIES.find(a => a.id === o.type) || ACTIVITIES[ACTIVITIES.length - 1]).met) * bodyKg() * o.min / 60);
+const otherName = o => o.type === 'other' ? (o.name || 'Annan träning') : (ACTIVITIES.find(a => a.id === o.type) || { name: o.name || 'Träning' }).name;
 function weekStats(ref = new Date()) {
   const ws = weekStart(ref).getTime(), we = ws + 7 * DAY_MS;
   const ss = data.sessions.filter(s => s.start >= ws && s.start < we && (s.end ? true : hasWork(s)));
-  return { ss, count: ss.length, min: ss.reduce((a, s) => a + durMin(s), 0), kcal: ss.reduce((a, s) => a + sessionKcal(s), 0), vol: ss.reduce((a, s) => a + sessionVolume(s), 0) };
+  const os = data.other.filter(o => o.start >= ws && o.start < we);
+  const sk = ss.reduce((a, s) => a + sessionKcal(s), 0), ok = os.reduce((a, o) => a + otherKcal(o), 0);
+  return { ss, os, count: ss.length, min: ss.reduce((a, s) => a + durMin(s), 0) + os.reduce((a, o) => a + o.min, 0), kcal: sk + ok, sk, ok, vol: ss.reduce((a, s) => a + sessionVolume(s), 0) };
 }
 const plannedPerWeek = () => Object.values(data.schedule).filter(Boolean).length || 4;
 function streak() {
@@ -212,25 +226,33 @@ function streak() {
   if (weekStats().count >= goal) n++;
   return n;
 }
-function nextPlanned() {
+const lastOfPass = id => data.sessions.filter(s => s.dayId === id && (s.end || hasWork(s))).sort((a, b) => b.start - a.start)[0];
+function suggestedPass() {
+  const last = data.sessions.filter(s => s.end || hasWork(s)).sort((a, b) => b.start - a.start)[0];
+  if (!last) return PROGRAM[0].id;
+  const i = PROGRAM.findIndex(d => d.id === last.dayId);
+  return PROGRAM[(i + 1) % PROGRAM.length].id;
+}
+function nextTrainingDay() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const doneToday = data.sessions.some(s => ymd(s.start) === ymd(today) && s.end);
   for (let i = 0; i < 8; i++) {
-    const d = new Date(today.getTime() + i * DAY_MS), dayId = data.schedule[d.getDay()];
-    if (dayId && !(i === 0 && doneToday)) return { date: d, day: dayById(dayId), label: i === 0 ? 'idag' : i === 1 ? 'imorgon' : DAYNAMES[d.getDay()].toLowerCase() };
+    const d = new Date(today.getTime() + i * DAY_MS);
+    if (data.schedule[d.getDay()] && !(i === 0 && doneToday)) return { date: d, label: i === 0 ? 'idag' : i === 1 ? 'imorgon' : 'på ' + DAYNAMES[d.getDay()].toLowerCase() };
   }
-  return { date: today, day: dayById('d1'), label: 'idag' };
+  return { date: today, label: 'idag' };
 }
 function notes() {
   const left = Math.max(0, Math.ceil((new Date(GOAL_DATE + 'T00:00:00') - new Date()) / DAY_MS));
-  const w = weekStats(), rec = records()[0], st = streak(), nx = nextPlanned();
+  const w = weekStats(), rec = records()[0], st = streak(), nx = nextTrainingDay(), sp = dayById(suggestedPass());
   const list = [];
   if (left) list.push(`${left} dagar kvar till 1 december. Med ${plannedPerWeek()} pass i veckan blir det cirka ${Math.round(left / 7 * plannedPerWeek())} pass till.`);
   if (w.vol >= 5000) list.push(`Du har lyft ${fmt(w.vol / 1000)} ton den här veckan. Det är ungefär ${fmt(w.vol / 5000)} elefanter.`);
   else if (w.vol >= 1000) list.push(`Du har lyft ${fmt(w.vol / 1000)} ton den här veckan. Ungefär ${fmt(w.vol / 2000)} Volvo XC60.`);
+  if (w.kcal >= 500) list.push(`≈ ${fmt(w.kcal, 0)} kcal förbrända på träning den här veckan.`);
   if (rec) list.push(`Senaste rekordet: ${rec.e.name}, ${fmt(rec.kg)} kg × ${rec.r}. Nästa steg: ${fmt(rec.kg + kgStep(rec.kg))} kg.`);
   if (st >= 2) list.push(`${st} veckor i rad med ${plannedPerWeek()} pass. Kontinuitet slår motivation.`);
-  list.push(`Nästa pass ${nx.label}: ${nx.day.short}. Lägg fram träningskläderna kvällen innan.`);
+  list.push(`Nästa träning ${nx.label}: ${sp.name} står på tur. Lägg fram träningskläderna kvällen innan.`);
   list.push('Kontinuitet idag – starkare imorgon. Ett pass i taget.');
   return list;
 }
@@ -271,7 +293,7 @@ function render() {
   if (pending && pending.kind === 'recovery') { $('#nav').hidden = true; return viewNewPassword(); }
   $('#nav').hidden = false;
   const p = (location.hash.slice(1) || '/').split('/').filter(Boolean);
-  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === ({ ovning: 'pass', ny: 'pass', andra: 'pass', logg: 'historik' }[p[0]] || p[0] || 'hem')));
+  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === ({ ovning: 'pass', ny: 'pass', andra: 'pass', logg: 'historik', annan: 'hem' }[p[0]] || p[0] || 'hem')));
   if (p[0] === 'pass') viewDay(p[1]);
   else if (p[0] === 'ovning') viewExercise(p[1]);
   else if (p[0] === 'profil') viewProfile();
@@ -279,6 +301,7 @@ function render() {
   else if (p[0] === 'logg') viewSession(p[1]);
   else if (p[0] === 'ny') viewExerciseForm(p[1], null);
   else if (p[0] === 'andra') viewExerciseForm(null, p[1]);
+  else if (p[0] === 'annan') viewOther(p[1]);
   else viewHome();
   scrollTo(0, 0);
 }
@@ -336,23 +359,27 @@ function viewNewPassword() {
 }
 
 /* startsida */
+let pickId = null, volPick = null;
 function viewHome() {
-  const now = new Date(), w = weekStats(), goal = plannedPerWeek(), nx = nextPlanned(), s = active();
+  const now = new Date(), w = weekStats(), goal = plannedPerWeek(), s = active();
   const ns = notes(); noteIdx %= ns.length;
   const circ = 301.6, off = circ * (1 - Math.min(1, w.count / goal));
   const ws = weekStart(now);
   const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(ws.getTime() + i * DAY_MS), wd = d.getDay(), dayId = data.schedule[wd];
-    const done = w.ss.filter(x => ymd(x.start) === ymd(d));
-    const info = done.length ? `${DAYNAMES[wd]}: ${done.map(x => `${dayById(x.dayId).short}, ${hm(durMin(x))}${x.warmup ? ' inkl. uppvärmning' : ''}`).join(' + ')}`
-      : dayId ? `${DAYNAMES[wd]}: planerat ${dayById(dayId).name}` : `${DAYNAMES[wd]}: vila`;
-    return `<button class="day ${done.length ? 's' : dayId ? 'p' : ''} ${ymd(d) === ymd(now) ? 'today' : ''}" data-info="${esc(info)}" aria-label="${esc(info)}">${DAYNAMES[wd][0]}<i></i></button>`;
+    const d = new Date(ws.getTime() + i * DAY_MS), wd = d.getDay(), planned = data.schedule[wd];
+    const done = w.ss.filter(x => ymd(x.start) === ymd(d)), oth = w.os.filter(x => ymd(x.start) === ymd(d));
+    const parts = [...done.map(x => `${dayById(x.dayId).name.split(' – ')[0]}, ${hm(durMin(x))}`), ...oth.map(o => `${otherName(o)}, ${hm(o.min)}`)];
+    const info = parts.length ? `${DAYNAMES[wd]}: ${parts.join(' + ')}` : planned ? `${DAYNAMES[wd]}: planerad träningsdag` : `${DAYNAMES[wd]}: vila`;
+    const cls = done.length ? 's' : oth.length ? 'k' : planned ? 'p' : '';
+    return `<button class="day ${cls} ${ymd(d) === ymd(now) ? 'today' : ''}" data-info="${esc(info)}" aria-label="${esc(info)}">${DAYNAMES[wd][0]}<i></i></button>`;
   }).join('');
   const weeks = Array.from({ length: 8 }, (_, i) => { const d = new Date(now.getTime() - (7 - i) * 7 * DAY_MS); return { wk: isoWeek(d), min: weekStats(d).min }; });
   const maxMin = Math.max(60, ...weeks.map(x => x.min));
   const avg = Math.round(weeks.slice(0, 7).reduce((a, x) => a + x.min, 0) / 7);
-  const wts = data.profile.weights, recs = records().slice(0, 3);
-  const nextDay = s ? dayById(s.dayId) : nx.day;
+  const recs = records().slice(0, 3), sugg = suggestedPass();
+  if (!pickId) pickId = sugg;
+  const recent = [...data.sessions.filter(x => x.end).map(x => ({ t: x.start, html: sessionRow(x) })), ...data.other.map(o => ({ t: o.start, html: otherRow(o) }))].sort((a, b) => b.t - a.t).slice(0, 3);
+  const passNo = id => dayById(id).name.split(' – ')[0];
 
   app.innerHTML = `
   <header class="hdr"><div><small>${DAYNAMES[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]} · vecka ${isoWeek(now)}</small>
@@ -369,27 +396,130 @@ function viewHome() {
       <dt>Tid</dt><dd>${hm(w.min)}</dd><dt>Kalorier</dt><dd>≈ ${fmt(w.kcal, 0)} kcal</dd>
       <dt>Volym</dt><dd>${fmt(w.vol / 1000)} ton</dd><dt>I rad</dt><dd>${streak()} veckor</dd></dl></div></div>
     <div class="days">${days}</div><div class="dayinfo" id="dayinfo"></div>
-    <div class="legend"><span style="--c:#4DA3FF">Tränat</span><span style="--c:transparent;--b:2px solid #4DA3FF">Planerat</span></div></div>
+    <div class="legend"><span style="--c:#4DA3FF">Styrka</span><span style="--c:#35C2C9">Övrig träning</span><span style="--c:transparent;--b:2px solid #4DA3FF">Planerad</span></div></div>
 
-  <section><h3>${s ? 'Pågående pass' : 'Nästa pass'} <span>${s ? '' : nx.label + ' 06–09'}</span></h3>
-    <div class="next"><div class="img"><img src="${imgSrc(nextDay.exercises[0])}" alt=""><span class="tag">${nextDay.exercises.length} övningar · 45–50 min</span></div>
-    <div class="body"><h4>${esc(nextDay.name)}</h4><p>${esc(nextDay.exercises.slice(0, 3).map(e => e.name).join(', '))} med mera.</p>
-    ${s ? `<a class="btn go" href="#/pass/${s.dayId}">Fortsätt <b data-clock>${clock((Date.now() - s.start) / 1000)}</b></a>` : `<button class="btn" id="start">Starta pass</button>`}</div></div></section>
+  ${s ? `<section><h3>Pågående pass</h3><div class="next"><div class="img"><img src="${imgSrc(dayById(s.dayId).exercises[0])}" alt=""></div>
+    <div class="body"><h4>${esc(dayById(s.dayId).name)}</h4><p>Startat ${timeOf(s.start)}.</p>
+    <a class="btn go" href="#/pass/${s.dayId}">Fortsätt <b data-clock>${clock((Date.now() - s.start) / 1000)}</b></a></div></div></section>`
+  : `<section><h3>Dagens pass <span>välj själv</span></h3>
+    <div class="picker">${PROGRAM.map((p, i) => { const l = lastOfPass(p.id); return `<button class="pk ${p.id === pickId ? 'on' : ''}" data-pick="${p.id}">
+      <small>${p.id === sugg ? '<b class="tur">På tur · Pass ' + (i + 1) + '</b>' : 'Pass ' + (i + 1)}</small><b>${esc(p.short)}</b><small>${l ? 'senast ' + shortDate(l.start).toLowerCase() : 'ej kört än'}</small></button>`; }).join('')}</div>
+    <button class="btn" id="start" style="margin-top:10px">Starta ${esc(passNo(pickId))}</button></section>`}
+  <a class="add" href="#/annan" style="display:block;text-align:center;margin-top:10px">+ Annan träning</a>
 
   <section><h3>Mot målvikten</h3>${goalCard()}</section>
+  <section><h3>Kalorier <span>vecka ${isoWeek(now)}</span></h3>${kcalCard(now)}</section>
+  <section><h3>Lyft vikt <span>vecka ${isoWeek(now)} mot ${isoWeek(new Date(now.getTime() - 7 * DAY_MS))}</span></h3><div id="volcard">${volCard(now)}</div></section>
 
   <section><h3>Träningstid <span>senaste 8 veckorna</span></h3><div class="card">
     <div class="bars" role="img" aria-label="Träningstid per vecka">${weeks.map(x => `<div><i style="height:${Math.round(x.min / maxMin * 100)}%" title="${hm(x.min)}"></i><small>v${x.wk}</small></div>`).join('')}</div>
     <p class="muted" style="margin:10px 0 0">Snitt ${hm(avg)} per vecka de senaste 7 hela veckorna.</p></div></section>
 
-
-  ${data.sessions.some(x => x.end) ? `<section><h3>Senaste pass <a href="#/historik" style="font-family:Barlow,sans-serif;font-size:14px;font-weight:500">Visa alla</a></h3><div class="card list">${data.sessions.filter(x => x.end).sort((a, b) => b.start - a.start).slice(0, 3).map(sessionRow).join('')}</div></section>` : ''}
+  ${recent.length ? `<section><h3>Senaste träning <a href="#/historik" style="font-family:Barlow,sans-serif;font-size:14px;font-weight:500">Visa alla</a></h3><div class="card list">${recent.map(x => x.html).join('')}</div></section>` : ''}
   ${recs.length ? `<section><h3>Senaste rekord</h3><div class="card list">${recs.map(r => `<a href="#/ovning/${r.e.id}"><span>${esc(r.e.name)}${ymd(r.at) === ymd(now) ? '<span class="badge">Idag</span>' : ''}</span><em>${fmt(r.kg)} kg × ${r.r}</em></a>`).join('')}</div></section>` : ''}`;
 
   $('#note').onclick = () => { noteIdx = (noteIdx + 1) % ns.length; $('#noteText').textContent = ns[noteIdx]; };
   $$('.day').forEach(b => b.onclick = () => { $('#dayinfo').textContent = b.dataset.info; });
   const today = $('.day.today'); if (today) $('#dayinfo').textContent = today.dataset.info;
-  const st = $('#start'); if (st) st.onclick = () => { startSession(nx.day.id); location.hash = '#/pass/' + nx.day.id; };
+  $$('.pk').forEach(b => b.onclick = () => { pickId = b.dataset.pick; $$('.pk').forEach(x => x.classList.toggle('on', x === b)); $('#start').textContent = 'Starta ' + passNo(pickId); });
+  const st = $('#start'); if (st) st.onclick = () => { const id = pickId; pickId = null; startSession(id); location.hash = '#/pass/' + id; };
+  bindVol(now);
+}
+
+/* kalorikort */
+function kcalCard(now) {
+  const ws = weekStart(now), w = weekStats(now), prev = weekStats(new Date(now.getTime() - 7 * DAY_MS));
+  const perDay = Array.from({ length: 7 }, (_, i) => {
+    const d = ymd(ws.getTime() + i * DAY_MS);
+    const sk = w.ss.filter(x => ymd(x.start) === d).reduce((a, x) => a + sessionKcal(x), 0);
+    const ok = w.os.filter(x => ymd(x.start) === d).reduce((a, x) => a + otherKcal(x), 0);
+    return { d, sk, ok, wd: new Date(ws.getTime() + i * DAY_MS).getDay() };
+  });
+  const max = Math.max(500, ...perDay.map(x => x.sk + x.ok));
+  const today = perDay.find(x => x.d === ymd(now)) || { sk: 0, ok: 0 };
+  const diff = prev.kcal ? Math.round((w.kcal - prev.kcal) / prev.kcal * 100) : null;
+  return `<div class="card">
+    <div class="two"><div class="mini"><span class="muted">Idag</span><b>≈ ${fmt(today.sk + today.ok, 0)} kcal</b></div><div class="mini"><span class="muted">Veckan</span><b>≈ ${fmt(w.kcal, 0)} kcal</b></div></div>
+    <div class="kbars" role="img" aria-label="Kalorier per dag denna vecka">${perDay.map(x => `<div title="${DAYNAMES[x.wd]}: ${fmt(x.sk + x.ok, 0)} kcal">
+      <span class="kv">${x.sk + x.ok ? fmt(x.sk + x.ok, 0) : ''}</span>
+      <i class="ko" style="height:${x.ok / max * 88}%;${x.sk ? '' : 'border-radius:4px'}"></i><i class="ks" style="height:${x.sk / max * 88}%;${x.ok ? '' : 'border-radius:4px'}"></i><small>${DAYNAMES[x.wd][0]}</small></div>`).join('')}</div>
+    <div class="legend2"><span><i style="background:var(--blue)"></i>Styrka ≈ ${fmt(w.sk, 0)}</span><span><i style="background:#35C2C9"></i>Övrig träning ≈ ${fmt(w.ok, 0)}</span></div>
+    <p class="muted" style="margin:8px 0 0">Förra veckan ≈ ${fmt(prev.kcal, 0)} kcal${diff != null ? ` · <span class="${diff >= 0 ? 'good' : 'badv'}">${diff >= 0 ? '+' : '−'}${Math.abs(diff)} %</span>` : ''}</p></div>`;
+}
+
+/* lyft vikt per pass */
+const exVol = (s, id) => doneSets(s, id).reduce((a, x) => a + x.kg * x.r, 0);
+function volCard(now) {
+  const w = weekStats(now), prev = weekStats(new Date(now.getTime() - 7 * DAY_MS));
+  const per = PROGRAM.map(p => ({ p, cur: w.ss.filter(s => s.dayId === p.id).reduce((a, s) => a + sessionVolume(s), 0), old: prev.ss.filter(s => s.dayId === p.id).reduce((a, s) => a + sessionVolume(s), 0) }));
+  const max = Math.max(1, ...per.flatMap(x => [x.cur, x.old]));
+  const diff = prev.vol ? Math.round((w.vol - prev.vol) / prev.vol * 100) : null;
+  let detail = '';
+  if (volPick) {
+    const d = dayById(volPick);
+    const rows = d.exercises.map(e => ({ e, cur: w.ss.reduce((a, s) => a + exVol(s, e.id), 0), old: prev.ss.reduce((a, s) => a + exVol(s, e.id), 0) }))
+      .filter(x => x.cur || x.old).sort((a, b) => (b.cur - b.old) - (a.cur - a.old));
+    detail = `<div class="list" style="margin-top:10px"><div><b>${esc(d.name)}</b><span class="muted">denna vecka · skillnad</span></div>${rows.length ? rows.map(x => `<a href="#/ovning/${x.e.id}"><span>${esc(x.e.name)}</span><em>${fmt(x.cur / 1000, 2)} t <small class="${x.cur - x.old >= 0 ? 'good' : 'badv'}">${signed((x.cur - x.old) / 1000, ' t')}</small></em></a>`).join('') : '<div><span class="muted">Inget loggat de här två veckorna</span></div>'}</div>`;
+  }
+  return `<div class="card">
+    <div class="tot3"><div class="mini"><span class="muted">Denna vecka</span><b>${fmt(w.vol / 1000)} ton</b></div><div class="mini"><span class="muted">Förra veckan</span><b>${fmt(prev.vol / 1000)} ton</b></div>
+      <div class="mini"><span class="muted">Skillnad</span><b class="${diff == null ? '' : diff >= 0 ? 'good' : 'badv'}">${diff == null ? '–' : (diff >= 0 ? '+' : '−') + Math.abs(diff) + ' %'}</b></div></div>
+    <div class="vgrp">${per.map((x, i) => `<button class="vg ${volPick === x.p.id ? 'on' : ''}" data-vp="${x.p.id}" aria-label="Pass ${i + 1}: ${fmt(x.cur / 1000)} ton, förra veckan ${fmt(x.old / 1000)} ton">
+      <span class="pair"><i class="old" style="height:${x.old / max * 100}%"></i><i class="cur" style="height:${x.cur / max * 100}%"></i></span>
+      <b>Pass ${i + 1}</b><small>${fmt(x.cur / 1000)} t</small></button>`).join('')}</div>
+    <div class="legend2"><span><i style="background:var(--line)"></i>Förra veckan</span><span><i style="background:var(--blue)"></i>Denna vecka</span></div>
+    ${detail || '<p class="muted" style="margin:8px 0 0">Tryck på ett pass för att se vilka övningar som ökat mest.</p>'}</div>`;
+}
+function bindVol(now) {
+  $$('.vg').forEach(b => b.onclick = () => { volPick = volPick === b.dataset.vp ? null : b.dataset.vp; $('#volcard').innerHTML = volCard(now); bindVol(now); });
+}
+
+/* annan träning */
+function otherRow(o) {
+  return `<a href="#/annan/${o.id}"><span>${shortDate(o.start)}<br><small class="muted">${esc(otherName(o))}</small></span>
+    <em>${hm(o.min)}<br><small class="muted" style="font-weight:400">≈ ${fmt(otherKcal(o), 0)} kcal</small></em></a>`;
+}
+function viewOther(id) {
+  const editing = id ? data.other.find(o => o.id === id) : null;
+  if (id && !editing) { location.hash = '#/historik'; return; }
+  const o = editing || { type: 'mtb', name: '', start: Date.now(), min: 60, kcal: null, note: '' };
+  app.innerHTML = `
+  <header class="top"><a class="back" href="${editing ? '#/historik' : '#/'}" aria-label="Tillbaka">‹</a>
+    <div class="t"><b>${editing ? 'Ändra träning' : 'Annan träning'}</b><span>Cykel, löpning, padel med mera</span></div></header>
+  <div class="card">
+    <label class="field"><span>Aktivitet</span><select id="otype">${ACTIVITIES.map(a => `<option value="${a.id}" ${a.id === o.type ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
+    <label class="field" id="onameW" ${o.type === 'other' ? '' : 'hidden'}><span>Namn på aktiviteten</span><input id="oname" value="${esc(o.name)}" placeholder="Stand up paddle"></label>
+    <div class="two">
+      <label class="field"><span>Datum</span><input id="odate" type="date" value="${ymd(o.start)}"></label>
+      <label class="field"><span>Tid (minuter)</span><input id="omin" type="number" inputmode="numeric" min="1" max="1440" value="${o.min}"></label></div>
+    <label class="field"><span>Kalorier – lämna tomt så räknar appen</span><input id="okcal" type="number" inputmode="numeric" min="0" max="10000" value="${o.kcal ?? ''}" placeholder="t.ex. från klockan"></label>
+    <div class="nudge" id="oest" style="margin:0 0 12px"></div>
+    <label class="field" style="margin:0"><span>Anteckning</span><textarea id="onote" placeholder="Runt sjön, tung terräng.">${esc(o.note)}</textarea></label></div>
+  <section><button class="btn" id="osave">Spara</button>
+    ${editing ? '<button class="btn ghost danger" id="odel" style="margin-top:10px">Ta bort</button>' : ''}</section>`;
+  const est = () => {
+    const tmp = { type: $('#otype').value, min: +$('#omin').value || 0, kcal: $('#okcal').value === '' ? null : +$('#okcal').value };
+    $('#onameW').hidden = tmp.type !== 'other';
+    $('#oest').textContent = tmp.kcal != null ? `${fmt(tmp.kcal, 0)} kcal (ditt eget värde)` : `≈ ${fmt(otherKcal(tmp), 0)} kcal vid ${fmt(bodyKg())} kg ${data.profile.weights.length ? '(din profilvikt)' : '(standardvärde)'}`;
+  };
+  ['#otype', '#omin', '#okcal'].forEach(sel => { $(sel).oninput = est; $(sel).onchange = est; }); est();
+  $('#osave').onclick = () => {
+    const min = Math.round(+$('#omin').value);
+    if (!(min >= 1 && min <= 1440)) return toast('Ange tid i minuter');
+    const dv = $('#odate').value; if (!dv) return toast('Ange datum');
+    const keep = editing ? new Date(editing.start) : new Date();
+    const start = new Date(dv + 'T00:00:00'); start.setHours(keep.getHours(), keep.getMinutes());
+    const kv = $('#okcal').value;
+    const fields = { type: $('#otype').value, name: $('#oname').value.trim(), start: start.getTime(), min, kcal: kv === '' ? null : Math.max(0, Math.round(+kv)), note: $('#onote').value.trim() };
+    if (fields.type === 'other' && !fields.name) return toast('Ge aktiviteten ett namn');
+    if (editing) Object.assign(editing, fields); else data.other.push({ id: 'o' + Date.now(), ...fields });
+    save(); toast(`${otherName(fields)} sparad · ≈ ${fmt(otherKcal(fields), 0)} kcal`);
+    location.hash = editing ? '#/historik' : '#/';
+  };
+  if ($('#odel')) $('#odel').onclick = () => {
+    if (!confirm('Ta bort den här träningen?')) return;
+    data.other = data.other.filter(x => x !== editing); save(); toast('Borttagen'); location.hash = '#/historik';
+  };
 }
 
 /* målvikt */
@@ -442,12 +572,12 @@ function goalCard() {
 /* dagvy */
 function viewDay(dayId) {
   const s = active();
-  const d = dayById(dayId) || (s ? dayById(s.dayId) : nextPlanned().day);
+  const d = dayById(dayId) || (s ? dayById(s.dayId) : dayById(suggestedPass()));
   const mine = s && s.dayId === d.id;
   const last = data.sessions.filter(x => x.dayId === d.id && x.end).sort((a, b) => b.start - a.start)[0];
   const wu = mine && s.warmup;
   app.innerHTML = `
-  <nav class="tabs" aria-label="Dagar">${PROGRAM.map((x, i) => `<a href="#/pass/${x.id}" class="${x.id === d.id ? 'on' : ''}">Dag ${i + 1}</a>`).join('')}</nav>
+  <nav class="tabs" aria-label="Pass">${PROGRAM.map((x, i) => `<a href="#/pass/${x.id}" class="${x.id === d.id ? 'on' : ''}">Pass ${i + 1}</a>`).join('')}</nav>
   <div class="dayhead"><h1>${esc(d.short)}</h1><p>${esc(d.focus)}${last ? ` · förra gången ${hm(durMin(last))}` : ''}</p></div>
   ${s && !mine ? `<div class="notice">Du har ett pågående pass: <a href="#/pass/${s.dayId}">${esc(dayById(s.dayId).name)}</a>.</div>` : ''}
   <div class="card timer"><div><div class="muted">Passtimer</div><div class="clock" ${mine ? 'data-clock' : ''}>${mine ? clock((Date.now() - s.start) / 1000) : '0:00'}</div></div>
@@ -465,7 +595,7 @@ function viewDay(dayId) {
       const right = mine && done ? `${done}/${e.sets} ✓` : sg ? (sg.up ? `▲ ${fmt(sg.kg)} kg` : `${fmt(sg.last.best)} kg`) : '';
       return `<a href="#/ovning/${e.id}" class="${mine && done >= e.sets ? 'done' : ''}"><img src="${imgSrc(e)}" alt="" loading="lazy">
         <span class="t"><b>${esc(e.name)}</b><small>${target(e)} · vila ${e.rest} s</small></span><span class="st">${right}</span></a>`;
-    }).join('')}</div><a class="add" href="#/ny/${d.id}" style="display:block;text-align:center">+ Lägg till egen övning</a></section>
+    }).join('')}</div><a class="btn ghost" href="#/ny/${d.id}">📷 Lägg till egen övning</a></section>
   ${mine ? `<section><button class="btn go" id="end2">Avsluta pass</button><button class="linkbtn" id="cancel" style="width:100%;color:var(--bad)">Avbryt passet utan att spara</button></section>` : ''}`;
 
   const start = $('#start'); if (start) start.onclick = () => { if (ensureSession(d)) viewDay(d.id); };
@@ -670,15 +800,15 @@ function deleteSession(s) {
   data.sessions = data.sessions.filter(x => x !== s); save();
 }
 function viewHistory() {
-  const list = data.sessions.slice().sort((a, b) => b.start - a.start);
+  const list = [...data.sessions.map(s => ({ t: s.start, html: sessionRow(s) })), ...data.other.map(o => ({ t: o.start, html: otherRow(o) }))].sort((a, b) => b.t - a.t);
   let month = '', html = '';
-  for (const s of list) {
-    const d = new Date(s.start), m = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  for (const x of list) {
+    const d = new Date(x.t), m = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
     if (m !== month) { if (html) html += '</div>'; html += `<h3 class="mhead">${m.charAt(0).toUpperCase() + m.slice(1)}</h3><div class="card list">`; month = m; }
-    html += sessionRow(s);
+    html += x.html;
   }
   if (html) html += '</div>';
-  app.innerHTML = `<header class="hdr"><div><small>${list.length} pass totalt</small><h1>Historik</h1></div></header>
+  app.innerHTML = `<header class="hdr"><div><small>${data.sessions.length} styrkepass · ${data.other.length} övriga</small><h1>Historik</h1></div><a class="btn small" href="#/annan" style="margin-top:14px">+ Annan träning</a></header>
     ${html || '<div class="card"><p style="margin:0">Här hamnar dina pass när du loggat det första. Starta ett pass under <a href="#/pass">Pass</a>.</p></div>'}`;
 }
 function viewSession(sid) {
@@ -751,9 +881,9 @@ function viewProfile() {
     ${w.length ? `<div class="list" style="margin-top:6px">${w.slice(-6).reverse().map(x => `<div><span>${x.date}</span><span><em>${fmt(x.kg)} kg</em><button class="xbtn" data-del="${x.date}" aria-label="Ta bort vägningen ${x.date}">✕</button></span></div>`).join('')}</div>` : ''}
     <p class="muted" style="margin:10px 0 0">Vikten används för att räkna kalorier.</p></div></section>
 
-  <section><h3>Veckoschema <span>morgonpass 06–09</span></h3><div class="card sched">
-    ${[1, 2, 3, 4, 5, 6, 0].map(wd => `<label>${DAYNAMES[wd].slice(0, 3)}<select data-wd="${wd}">
-      <option value="">Vila</option>${PROGRAM.map((x, i) => `<option value="${x.id}" ${data.schedule[wd] === x.id ? 'selected' : ''}>D${i + 1}</option>`).join('')}</select></label>`).join('')}</div></section>
+  <section><h3>Träningsdagar <span>morgonpass 06–09</span></h3><div class="card">
+    <div class="wdays">${[1, 2, 3, 4, 5, 6, 0].map(wd => `<button class="wdb ${data.schedule[wd] ? 'on' : ''}" data-wd="${wd}" aria-pressed="${!!data.schedule[wd]}">${DAYNAMES[wd].slice(0, 3)}</button>`).join('')}</div>
+    <p class="muted" style="margin:10px 0 0">${plannedPerWeek()} träningsdagar per vecka. Du väljer själv vilket pass du kör. Appen föreslår det som står på tur.</p></div></section>
 
   <section><h3>Data</h3><div class="card">
     <p class="muted" style="margin:0 0 10px">${data.sessions.filter(s => s.end).length} sparade pass. Allt synkas till ditt konto.</p>
@@ -780,7 +910,7 @@ function viewProfile() {
     if (ex) ex.kg = kg; else w.push({ date, kg });
     w.sort((a, b) => a.date.localeCompare(b.date)); save(); toast('Vägning sparad'); viewProfile();
   };
-  $$('.sched select').forEach(sel => sel.onchange = () => { const wd = sel.dataset.wd; if (sel.value) data.schedule[wd] = sel.value; else delete data.schedule[wd]; save(); });
+  $$('.wdb').forEach(b => b.onclick = () => { const wd = b.dataset.wd; if (data.schedule[wd]) delete data.schedule[wd]; else data.schedule[wd] = true; save(); viewProfile(); });
   $('#export').onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
